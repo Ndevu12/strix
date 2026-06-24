@@ -1,5 +1,5 @@
 name: 'StayAwakeBot Strix'
-description: 'Detect supply-chain worm indicators (obfuscated loaders, fake fonts, VS Code auto-run, evil merges) in a checked-out repo and fail CI on findings.'
+description: 'Hunt supply-chain worm indicators — obfuscated loaders, fake fonts, VS Code auto-run, evil merges — and fail CI.'
 author: 'Ndevu12'
 branding:
   icon: 'eye'
