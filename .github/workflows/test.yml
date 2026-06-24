@@ -1,0 +1,46 @@
+name: test
+
+# Self-test the Action against this repo, which intentionally carries one inert planted
+# indicator (test/fixtures/infected/.gitignore matches `gitignore-autopush-markers`).
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scans-clean:
+    name: Passes when the only finding is allowlisted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Strix (fixture allowlisted -> should PASS)
+        uses: ./
+        with:
+          fail-on-findings: 'true'
+          allowlist-globs: 'test/**|gitignore-autopush-markers'
+
+  detects-planted-indicator:
+    name: Fails when the planted indicator is NOT allowlisted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Strix (no allowlist -> expected to FAIL on the fixture)
+        id: scan
+        uses: ./
+        continue-on-error: true
+        with:
+          fail-on-findings: 'true'
+      - name: Assert Strix flagged the planted indicator
+        if: always()
+        run: |
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "::error::Strix did NOT flag the planted indicator (outcome=${{ steps.scan.outcome }})"
+            exit 1
+          fi
+          echo "Strix correctly flagged the planted indicator."

@@ -1,0 +1,65 @@
+name: 'StayAwakeBot Strix'
+description: 'Detect supply-chain worm indicators (obfuscated loaders, fake fonts, VS Code auto-run, evil merges) in a checked-out repo and fail CI on findings.'
+author: 'Ndevu12'
+branding:
+  icon: 'eye'
+  color: 'purple'
+
+inputs:
+  version:
+    description: 'stayawakebot version from PyPI; blank = latest. Pin in production.'
+    required: false
+    default: ''
+  fail-on-findings:
+    description: 'Fail the job when indicators are found.'
+    required: false
+    default: 'true'
+  allowlist-globs:
+    description: 'Comma-separated `path_glob|signature_id` entries (a bare glob is ignored).'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1   # v6.3.0
+      with:
+        python-version: '3.14'   # stayawakebot 0.1.0 needs >=3.14; lower to '3.13' once 0.1.1 ships
+
+    - name: Install scanner from PyPI
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          pip install "stayawakebot==${{ inputs.version }}"
+        else
+          pip install stayawakebot
+        fi
+
+    - name: Run worm scan
+      shell: bash
+      run: |
+        set -euo pipefail
+        cfg="$(mktemp)"
+        {
+          echo "settings:"
+          echo "  exclude_dirs: [\".git\", \"node_modules\", \".next\", \"dist\", \"build\", \".malware-quarantine\", \".venv\", \"reports\"]"
+          echo "targets:"
+          echo "  local: [\"$GITHUB_WORKSPACE\"]"
+          echo "  github: { users: [], orgs: [] }"
+          if [ -n "${{ inputs.allowlist-globs }}" ]; then
+            echo "allowlist:"
+            IFS=',' read -ra G <<< "${{ inputs.allowlist-globs }}"
+            for entry in "${G[@]}"; do
+              glob="$(echo "${entry%%|*}" | xargs)"
+              echo "  - path_glob: \"$glob\""
+              if [ "$entry" != "${entry%%|*}" ]; then
+                sig="$(echo "${entry#*|}" | xargs)"
+                [ -n "$sig" ] && echo "    signature: \"$sig\""
+              fi
+            done
+          fi
+        } > "$cfg"
+        flag=""
+        [ "${{ inputs.fail-on-findings }}" = "true" ] && flag="--fail-on-findings"
+        stayawake-security-scan --config "$cfg" --local-only $flag
