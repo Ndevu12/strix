@@ -1,0 +1,13 @@
+# Require maintainer review for the files that DEFINE the security gate.
+#
+# Strix scans its own repo (.github/workflows/worm-guard.yml), but that gate runs the action code
+# and allowlist FROM THE PULL REQUEST UNDER REVIEW — so it cannot, by itself, stop a PR that weakens
+# it (e.g. neutering action.yml or widening config/security.yml's allowlist). Branch protection +
+# code-owner review of these paths is the real control.
+#
+# ACTIVATION: this file only has teeth when the default branch's protection has
+# "Require review from Code Owners" enabled. Turn that on in repo Settings → Branches.
+
+/action.yml            @Ndevu12
+/config/security.yml   @Ndevu12
+/.github/              @Ndevu12

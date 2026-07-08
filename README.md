@@ -39,10 +39,13 @@ jobs:
 
 ## How the verdict works
 
-Strix gates CI on **`saw scan`'s exit code**, which *is* the verdict — `0` clean, `1` infected —
-returned unconditionally (there is no fail-on-findings flag). The Action propagates that code, so
-the step, and the job, fails **if and only if** the repo is infected. To run without blocking
-(report only), set `continue-on-error: true` on the step — GitHub's native soft-fail:
+Strix gates CI on the scanner's **verdict** — `saw scan` exits `0` clean, `1` infected,
+unconditionally (there is no fail-on-findings flag). The Action propagates that so the job fails
+**if and only if** the repo is infected. It also **fails closed**: if the scan errored (e.g. an
+unreadable or malformed config), scanned no target (missing `actions/checkout` or a wrong path), or
+hit a usage error, the job goes **red** rather than reporting a green no-op — a security gate must
+never read "nothing scanned" as "clean". To run without blocking (report only), set
+`continue-on-error: true` on the step — GitHub's native soft-fail:
 
 ```yaml
       - uses: Ndevu12/strix@v1
@@ -64,17 +67,41 @@ that one file rather than duplicating it into the workflow:
 
 If your repo commits `config/security.yml`, Strix picks it up automatically — you can omit the
 input. Point `config-file` elsewhere only if your config lives at a non-standard path. To allowlist
-an intentional fixture, add a signature-scoped rule to that config (a bare `path_glob` with no
-`signature` is ignored, so a fresh payload under the same path is still flagged):
+an intentional fixture, add a signature-scoped rule to that config, and **scope the `path_glob` as
+tightly as possible** — prefer the exact file over a broad subtree, since a wide glob lets a *real*
+payload of that signature evade the gate anywhere under it. A bare `path_glob` with no `signature`
+is ignored, so a fresh payload under the same path is still flagged:
 
 ```yaml
 allowlist:
-  - {signature: gitignore-autopush-markers, path_glob: "tests/**"}
+  # good: exact fixture path
+  - {signature: gitignore-autopush-markers, path_glob: "tests/fixtures/infected/.gitignore"}
+  # avoid: "tests/**" would suppress this real indicator anywhere under tests/
 ```
+
+## Security model & hardening
+
+Strix runs on the checked-out tree, so on a `pull_request` **both the action invocation and your
+`config/security.yml` come from the PR under review**. The scan is a backstop — it cannot, by
+itself, stop a PR that weakens its own gate (e.g. widening the allowlist to suppress a planted
+payload). Deploy it with these controls:
+
+- **Require `actions/checkout` first.** Without a checkout there is no repo to scan; Strix fails
+  closed (red) rather than reporting a green no-op, but you still want the real tree scanned.
+- **Pin the action to a commit SHA** (`uses: Ndevu12/strix@<sha>`), not a moving tag, so the gate's
+  own logic can't change under you.
+- **Protect your `config/security.yml` with CODEOWNERS** and enable "Require review from Code
+  Owners" on your default branch, so allowlist widenings need a separate trusted approval.
+- **Make the Strix job a required status check** so a renamed/removed job blocks a merge instead of
+  silently passing.
+
+This repo dogfoods exactly that posture — see its [`.github/CODEOWNERS`](.github/CODEOWNERS) and
+[`worm-guard.yml`](.github/workflows/worm-guard.yml).
 
 ## Versioning
 
-`@v1` tracks the latest v1.x release (moving tag). Pin `@v0.1.0` for a fully reproducible build.
+`@v1` tracks the latest v1.x release (moving tag). Pin `@v0.1.0` (or a commit SHA) for a fully
+reproducible build.
 
 ## License
 

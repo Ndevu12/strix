@@ -52,10 +52,11 @@ runs:
 
     - name: Run worm scan
       shell: bash
-      # The scan gates CI by its EXIT CODE: `saw scan` exits 1 when the repo is infected and 0
-      # when clean, unconditionally (the exit code IS the verdict — there is no fail-on-findings
-      # flag). `set -e` propagates that code, so this step — and the job — fails iff infected.
-      # For a non-blocking, report-only run, set `continue-on-error: true` on the calling step.
+      # The scan gates CI on the scanner's verdict. `saw scan` exits 1 when infected and 0 when
+      # clean, but a security gate must NEVER read a non-scan as clean — so this runs `--json` and
+      # fails CLOSED unless the report proves a real clean verdict: at least one target scanned, no
+      # target errored (e.g. an unreadable/malformed config), and no usage/internal error. For a
+      # non-blocking, report-only run, set `continue-on-error: true` on the calling step.
       run: |
         set -euo pipefail
         # Config source — single source of truth; Strix synthesizes nothing. An explicit
@@ -73,4 +74,29 @@ runs:
         elif [ -f "$GITHUB_WORKSPACE/config/security.yml" ]; then
           cfg_flag=(-c "$GITHUB_WORKSPACE/config/security.yml")
         fi
-        saw scan "$GITHUB_WORKSPACE" "${cfg_flag[@]+"${cfg_flag[@]}"}"
+        report="$(mktemp)"
+        set +e
+        saw scan "$GITHUB_WORKSPACE" "${cfg_flag[@]+"${cfg_flag[@]}"}" --json > "$report"
+        rc=$?
+        set -e
+        # Parse the machine-readable report and FAIL CLOSED unless it proves a real clean verdict.
+        if ! targets=$(python3 -c "import json;print((json.load(open('$report')).get('summary') or {}).get('targets',0))" 2>/dev/null); then
+          echo "::error::saw scan produced no parseable JSON report (rc=$rc) — failing closed." >&2
+          exit 1
+        fi
+        errored=$(python3 -c "import json;print(sum(1 for r in (json.load(open('$report')).get('results') or []) if r.get('error')))")
+        infected=$(python3 -c "import json;print(sum(1 for r in (json.load(open('$report')).get('results') or []) if r.get('infected') or r.get('verdict')=='infected'))")
+        echo "Strix: scanned ${targets} target(s); infected=${infected}, errored=${errored}, scan rc=${rc}."
+        if [ "$rc" != "0" ] && [ "$rc" != "1" ]; then
+          echo "::error::saw scan exited ${rc} (usage/internal error) — failing closed." >&2; exit "${rc:-1}"
+        fi
+        if [ "$targets" -lt 1 ]; then
+          echo "::error::saw scan found NO target to scan (missing checkout, wrong path, or empty tree) — failing closed instead of a green no-op." >&2; exit 1
+        fi
+        if [ "$errored" -gt 0 ]; then
+          echo "::error::saw scan could NOT process ${errored} target(s) — e.g. an unreadable or malformed config. Failing closed: a config that can't be applied must never read as clean." >&2; exit 1
+        fi
+        if [ "$infected" -gt 0 ] || [ "$rc" = "1" ]; then
+          echo "::error::worm indicators found — ${infected} infected target(s)." >&2; exit 1
+        fi
+        echo "Strix: clean — all scanned targets are free of worm indicators."
