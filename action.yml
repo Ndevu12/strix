@@ -10,12 +10,12 @@ inputs:
     description: 'stayawakebot version from PyPI; blank = latest. Pin in production.'
     required: false
     default: ''
-  fail-on-findings:
-    description: 'Fail the job when indicators are found.'
-    required: false
-    default: 'true'
-  allowlist-globs:
-    description: 'Comma-separated `path_glob|signature_id` entries (a bare glob is ignored).'
+  config-file:
+    description: >-
+      Repo-relative path to your committed `saw` config whose `settings` and `allowlist` govern
+      the scan — the single source of truth; Strix adds no settings of its own. Defaults to the
+      conventional `config/security.yml` when your repo ships one; otherwise the scanner's
+      built-in defaults are used.
     required: false
     default: ''
 
@@ -25,7 +25,9 @@ runs:
     - name: Set up Python
       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1   # v6.3.0
       with:
-        python-version: '3.14'   # stayawakebot 0.1.0 needs >=3.14; lower to '3.13' once 0.1.1 ships
+        # stayawakebot requires Python >=3.11; 3.13 is a current, supported interpreter.
+        python-version: '3.13'
+        check-latest: true
 
     - name: Install scanner from PyPI
       shell: bash
@@ -36,30 +38,39 @@ runs:
           pip install stayawakebot
         fi
 
+    - name: Assert the saw CLI is available
+      shell: bash
+      # The scan step drives the `saw` CLI. Fail fast with a clear fix if the installed
+      # stayawakebot predates it (e.g. an old pinned `version`), instead of an opaque
+      # "saw: command not found" mid-scan.
+      run: |
+        if ! command -v saw >/dev/null 2>&1; then
+          echo "::error::installed stayawakebot lacks the 'saw' CLI — set the 'version' input to a release that ships it." >&2
+          exit 1
+        fi
+        echo "saw CLI OK ($(saw --version 2>/dev/null | head -n1))"
+
     - name: Run worm scan
       shell: bash
+      # The scan gates CI by its EXIT CODE: `saw scan` exits 1 when the repo is infected and 0
+      # when clean, unconditionally (the exit code IS the verdict — there is no fail-on-findings
+      # flag). `set -e` propagates that code, so this step — and the job — fails iff infected.
+      # For a non-blocking, report-only run, set `continue-on-error: true` on the calling step.
       run: |
         set -euo pipefail
-        cfg="$(mktemp)"
-        {
-          echo "settings:"
-          echo "  exclude_dirs: [\".git\", \"node_modules\", \".next\", \"dist\", \"build\", \".malware-quarantine\", \".venv\", \"reports\"]"
-          echo "targets:"
-          echo "  local: [\"$GITHUB_WORKSPACE\"]"
-          echo "  github: { users: [], orgs: [] }"
-          if [ -n "${{ inputs.allowlist-globs }}" ]; then
-            echo "allowlist:"
-            IFS=',' read -ra G <<< "${{ inputs.allowlist-globs }}"
-            for entry in "${G[@]}"; do
-              glob="$(echo "${entry%%|*}" | xargs)"
-              echo "  - path_glob: \"$glob\""
-              if [ "$entry" != "${entry%%|*}" ]; then
-                sig="$(echo "${entry#*|}" | xargs)"
-                [ -n "$sig" ] && echo "    signature: \"$sig\""
-              fi
-            done
+        # Config source — single source of truth; Strix synthesizes nothing. An explicit
+        # config-file wins; else the conventional config/security.yml when the repo ships one;
+        # else the scanner's built-in defaults. The positional target scopes the scan to the
+        # checked-out repo, overriding any `targets` in the config.
+        cfg_flag=()
+        if [ -n "${{ inputs.config-file }}" ]; then
+          cfg="$GITHUB_WORKSPACE/${{ inputs.config-file }}"
+          if [ ! -f "$cfg" ]; then
+            echo "::error::config-file '${{ inputs.config-file }}' not found in the repo — check the path or leave it empty." >&2
+            exit 1
           fi
-        } > "$cfg"
-        flag=""
-        [ "${{ inputs.fail-on-findings }}" = "true" ] && flag="--fail-on-findings"
-        stayawake-security-scan --config "$cfg" --local-only $flag
+          cfg_flag=(-c "$cfg")
+        elif [ -f "$GITHUB_WORKSPACE/config/security.yml" ]; then
+          cfg_flag=(-c "$GITHUB_WORKSPACE/config/security.yml")
+        fi
+        saw scan "$GITHUB_WORKSPACE" "${cfg_flag[@]+"${cfg_flag[@]}"}"
