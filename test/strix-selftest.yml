@@ -1,0 +1,11 @@
+# Self-test `saw` config for the Strix Action's own CI (see .github/workflows/test.yml).
+#
+# This repo ships ONE inert, planted indicator — test/fixtures/infected/.gitignore, which matches
+# the `gitignore-autopush-markers` signature — so the Action can prove it detects worms. This
+# config allowlists exactly that signature under tests, so the "scans clean" job (which points
+# `config-file` here) passes, while the "detects" job (which uses no config) still flags it.
+#
+# It is NOT named config/security.yml on purpose: that conventional name is auto-discovered by
+# the Action, which would allowlist the fixture for the detection test too.
+allowlist:
+  - {signature: gitignore-autopush-markers, path_glob: "test/**"}
