@@ -1,0 +1,4 @@
+# Empty allowlist ON PURPOSE. The Action's self-test (.github/workflows/test.yml) scans this repo's
+# planted fixture with THIS config to prove an un-allowlisted indicator is flagged and fails the
+# job. The real, narrowly-scoped allowlist lives in config/security.yml.
+allowlist: []

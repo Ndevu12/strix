@@ -1,0 +1,29 @@
+name: Worm Guard — block infected merges
+
+# Dogfood: Strix scans its OWN repo. Gate PRs (catch injected indicators) and pushes to main
+# (catch evil merges). This repo carries one INERT planted indicator on purpose
+# (test/fixtures/infected/.gitignore); config/security.yml allowlists exactly that signature under
+# test/, so a real payload anywhere — or that signature dropped outside test/ — still fails the gate.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read   # pure exit-code gate: green = clean, red = infected — keyed only on the verdict.
+
+jobs:
+  worm-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for evil-merge detection)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan this repo with Strix (config/security.yml is the single source of truth)
+        uses: ./
+        with:
+          # Pin the scanner for a reproducible gate — don't float the thing that decides merges.
+          # Bump deliberately after reviewing a newer release (keep in step with the moving v1 tag).
+          version: '0.1.7'
+          config-file: config/security.yml

@@ -1,0 +1,15 @@
+# StayAwakeBot Strix — security config for this repo's own worm-guard self-gate.
+#
+# Strix is itself a worm scanner, so it dogfoods itself: .github/workflows/worm-guard.yml runs the
+# Action against this repo on every PR / push to main and fails on findings. This repo ships ONE
+# inert, intentionally-planted indicator so the Action can prove it detects worms:
+#   test/fixtures/infected/.gitignore  ->  matches `gitignore-autopush-markers`
+#
+# Allowlist EXACTLY that signature under test/, and nothing more. The rule is signature-scoped, so
+# any OTHER payload — or this same signature dropped OUTSIDE test/ — is still caught. A bare
+# path_glob with no signature is ignored by design, so it can never blanket-suppress a fresh drop.
+#
+# Scan settings (exclude_dirs, max_file_bytes, …) are intentionally omitted: the scanner's packaged
+# defaults are the single source of truth. Add a `settings:` block only to override them.
+allowlist:
+  - {signature: gitignore-autopush-markers, path_glob: "test/**"}

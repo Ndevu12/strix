@@ -1,7 +1,10 @@
 name: test
 
 # Self-test the Action against this repo, which intentionally carries one inert planted
-# indicator (test/fixtures/infected/.gitignore matches `gitignore-autopush-markers`).
+# indicator (test/fixtures/infected/.gitignore matches `gitignore-autopush-markers`). The two jobs
+# exercise both of the Action's config-resolution paths — auto-detected config/security.yml, and an
+# explicit config-file — and prove it both suppresses the allowlisted fixture and still flags it
+# when the config does not allowlist it.
 on:
   push:
   pull_request:
@@ -11,28 +14,28 @@ permissions:
 
 jobs:
   scans-clean:
-    name: Passes when the saw config allowlists the fixture
+    name: Passes — auto-detected config/security.yml allowlists the fixture
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Run Strix with a config that allowlists the fixture -> should PASS
+      - name: Run Strix with no config input -> auto-detects config/security.yml -> should PASS
         uses: ./
-        with:
-          config-file: test/strix-selftest.yml
 
   detects-planted-indicator:
-    name: Fails when scanning with no allowlisting config
+    name: Fails — a config that does NOT allowlist the fixture still flags it
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Run Strix with no config -> expected to FAIL on the fixture
+      - name: Run Strix with a no-allowlist config -> expected to FAIL on the fixture
         id: scan
         uses: ./
         continue-on-error: true
+        with:
+          config-file: test/detection-check.yml
       - name: Assert Strix flagged the planted indicator
         if: always()
         run: |
