@@ -2,8 +2,14 @@ name: Worm Guard — block infected merges
 
 # Dogfood: Strix scans its OWN repo. Gate PRs (catch injected indicators) and pushes to main
 # (catch evil merges). This repo carries one INERT planted indicator on purpose
-# (test/fixtures/infected/.gitignore); config/security.yml allowlists exactly that signature under
-# test/, so a real payload anywhere — or that signature dropped outside test/ — still fails the gate.
+# (test/fixtures/infected/.gitignore); config/security.yml allowlists exactly that one file, so a
+# real payload anywhere else still fails the gate.
+#
+# THREAT MODEL: on a pull_request this checks out the PR head, so `uses: ./` runs the action code
+# AND config/security.yml FROM THE PR. A PR can therefore weaken its own gate (neuter action.yml or
+# widen the allowlist). This gate is a backstop; the real control is branch protection + CODEOWNERS
+# review of action.yml / config/security.yml / .github/** (see /.github/CODEOWNERS). The push-to-main
+# run is post-merge (detection), so keep the required check + code-owner review enabled.
 on:
   pull_request:
   push:

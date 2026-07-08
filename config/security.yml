@@ -5,11 +5,16 @@
 # inert, intentionally-planted indicator so the Action can prove it detects worms:
 #   test/fixtures/infected/.gitignore  ->  matches `gitignore-autopush-markers`
 #
-# Allowlist EXACTLY that signature under test/, and nothing more. The rule is signature-scoped, so
-# any OTHER payload — or this same signature dropped OUTSIDE test/ — is still caught. A bare
-# path_glob with no signature is ignored by design, so it can never blanket-suppress a fresh drop.
+# Allowlist EXACTLY that one file. `gitignore-autopush-markers` is a REAL Shai-Hulud indicator, so
+# the rule is scoped to the fixture's exact path — NOT `test/**`, which would let a genuine marker
+# dropped anywhere else under test/ evade the gate. A bare path_glob with no signature is ignored by
+# design, so it can never blanket-suppress a fresh drop.
 #
 # Scan settings (exclude_dirs, max_file_bytes, …) are intentionally omitted: the scanner's packaged
 # defaults are the single source of truth. Add a `settings:` block only to override them.
+#
+# THREAT MODEL: this file is read from the checked-out tree, so a PR can edit it. It is guarded by
+# CODEOWNERS (see /.github/CODEOWNERS) so widening the allowlist requires maintainer review. The
+# self-gate is a backstop, not a substitute for branch protection.
 allowlist:
-  - {signature: gitignore-autopush-markers, path_glob: "test/**"}
+  - {signature: gitignore-autopush-markers, path_glob: "test/fixtures/infected/.gitignore"}
