@@ -80,7 +80,7 @@ runs:
         rc=$?
         set -e
         # Parse the machine-readable report and FAIL CLOSED unless it proves a real clean verdict.
-        if ! targets=$(python3 -c "import json;print((json.load(open('$report')).get('summary') or {}).get('targets',0))" 2>/dev/null); then
+        if ! targets=$(python3 -c "import json;print(int((json.load(open('$report')).get('summary') or {}).get('targets',0) or 0))" 2>/dev/null); then
           echo "::error::saw scan produced no parseable JSON report (rc=$rc) — failing closed." >&2
           exit 1
         fi
