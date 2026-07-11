@@ -18,6 +18,61 @@ inputs:
       built-in defaults are used.
     required: false
     default: ''
+  fail-on:
+    description: >-
+      Verdict tier that turns the gate red. 'infected' (default) fails only on a confirmed
+      infection. 'suspicious' also fails on suspect-tier findings — e.g. a historical evil merge
+      still in the commit graph after the tree itself was cleaned. 'never' reports without gating
+      on the verdict (outputs and the step summary still carry it). Scan infrastructure failures —
+      no target scanned, an errored target, an unparseable report, a usage error — fail the job
+      REGARDLESS of this input: a security gate must never read a non-scan as clean. To soften
+      those too, use GitHub's native `continue-on-error: true` on the step.
+    required: false
+    default: 'infected'
+  require-db:
+    description: >-
+      'true' passes --require-db so the scan fails instead of silently degrading to the inline
+      malware seed when the offline advisory DB is absent or fails its integrity check — for
+      gates that must not lose coverage without noticing.
+    required: false
+    default: 'false'
+  remediate:
+    description: >-
+      'pr' runs `saw fix --pr` after an infected verdict: saw rebuilds the fix in an isolated
+      worktree off the remote's default branch, pushes the stable `security/auto-clean` branch,
+      and opens/updates ONE rolling PR per repo (never committing to the default branch itself).
+      The gate STAYS RED — remediation is a courtesy, and only a clean tree turns the check
+      green. Requires `contents: write` and `pull-requests: write` permissions plus the
+      repository setting "Allow GitHub Actions to create and approve pull requests". Without
+      push access saw degrades down its fallback ladder (fork PR, else a git-am-able patch in
+      sab-patches/ plus a deduplicated issue) — the step summary says which happened.
+      Default 'off'.
+    required: false
+    default: 'off'
+  github-token:
+    description: >-
+      Token used only by `remediate: pr` to push the fix branch and open the PR. Defaults to the
+      workflow token; pass a PAT or GitHub App token instead if the fix PR itself must trigger
+      your CI (events created with the default GITHUB_TOKEN don't start workflows).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdict:
+    description: "Overall scan verdict: 'clean', 'suspicious', or 'infected'."
+    value: ${{ steps.scan.outputs.verdict }}
+  infected:
+    description: 'Number of infected targets.'
+    value: ${{ steps.scan.outputs.infected }}
+  suspicious:
+    description: 'Number of suspicious (but not infected) targets.'
+    value: ${{ steps.scan.outputs.suspicious }}
+  findings:
+    description: 'Total number of findings across all targets.'
+    value: ${{ steps.scan.outputs.findings }}
+  report:
+    description: 'Path to the full-evidence JSON report on the runner.'
+    value: ${{ steps.scan.outputs.report }}
 
 runs:
   using: 'composite'
@@ -51,19 +106,27 @@ runs:
         echo "saw CLI OK ($(saw --version 2>/dev/null | head -n1))"
 
     - name: Run worm scan
+      id: scan
       shell: bash
-      # The scan gates CI on the scanner's verdict. `saw scan` exits 1 when infected and 0 when
-      # clean, but a security gate must NEVER read a non-scan as clean — so this runs `--json` and
-      # fails CLOSED unless the report proves a real clean verdict: at least one target scanned, no
-      # target errored (e.g. an unreadable/malformed config), and no usage/internal error. For a
-      # non-blocking, report-only run, set `continue-on-error: true` on the calling step.
+      # This step RUNS the scan and fails closed on anything that means "the scan did not
+      # really happen": unparseable report, usage/internal error, zero targets, an errored
+      # target. It does NOT gate on the verdict — that happens in the final "Enforce verdict
+      # gate" step, after optional remediation, so a fix PR can be opened before the job goes
+      # red. A security gate must NEVER read a non-scan as clean, so the fail-closed checks
+      # here apply regardless of `fail-on`.
       run: |
         set -euo pipefail
+        case "${{ inputs.fail-on }}" in
+          infected|suspicious|never) ;;
+          *) echo "::error::fail-on must be 'infected', 'suspicious', or 'never' (got '${{ inputs.fail-on }}')." >&2; exit 1;;
+        esac
         # Config source — single source of truth; Strix synthesizes nothing. An explicit
         # config-file wins; else the conventional config/security.yml when the repo ships one;
         # else the scanner's built-in defaults. The positional target scopes the scan to the
-        # checked-out repo, overriding any `targets` in the config.
+        # checked-out repo, overriding any `targets` in the config. The resolved path is exported
+        # so the remediation step applies the exact same allowlist as the scan.
         cfg_flag=()
+        cfg=""
         if [ -n "${{ inputs.config-file }}" ]; then
           cfg="$GITHUB_WORKSPACE/${{ inputs.config-file }}"
           if [ ! -f "$cfg" ]; then
@@ -72,23 +135,43 @@ runs:
           fi
           cfg_flag=(-c "$cfg")
         elif [ -f "$GITHUB_WORKSPACE/config/security.yml" ]; then
-          cfg_flag=(-c "$GITHUB_WORKSPACE/config/security.yml")
+          cfg="$GITHUB_WORKSPACE/config/security.yml"
+          cfg_flag=(-c "$cfg")
+        fi
+        # Optional flags are capability-probed against `saw scan -h` so an older pinned
+        # `version` degrades cleanly: a missing --reports-dir just skips the summary, but a
+        # missing --require-db when the caller asked for it is a hard error — the caller asked
+        # for a coverage guarantee this install cannot provide.
+        extra=()
+        if [ "${{ inputs.require-db }}" = "true" ]; then
+          if saw scan -h 2>/dev/null | grep -q -- '--require-db'; then
+            extra+=(--require-db)
+          else
+            echo "::error::require-db is 'true' but the installed stayawakebot lacks --require-db — set 'version' to a release that ships it." >&2
+            exit 1
+          fi
+        fi
+        reports_dir="$RUNNER_TEMP/strix-reports"
+        if saw scan -h 2>/dev/null | grep -q -- '--reports-dir'; then
+          extra+=(-d "$reports_dir")
         fi
         report="$(mktemp)"
         set +e
-        saw scan "$GITHUB_WORKSPACE" "${cfg_flag[@]+"${cfg_flag[@]}"}" --json > "$report"
+        saw scan "$GITHUB_WORKSPACE" "${cfg_flag[@]+"${cfg_flag[@]}"}" "${extra[@]+"${extra[@]}"}" --json > "$report"
         rc=$?
         set -e
-        # Parse the machine-readable report and FAIL CLOSED unless it proves a real clean verdict.
+        # Parse the machine-readable report and FAIL CLOSED unless it proves a real scan ran.
         if ! targets=$(python3 -c "import json;print(int((json.load(open('$report')).get('summary') or {}).get('targets',0) or 0))" 2>/dev/null); then
           echo "::error::saw scan produced no parseable JSON report (rc=$rc) — failing closed." >&2
           exit 1
         fi
         errored=$(python3 -c "import json;print(sum(1 for r in (json.load(open('$report')).get('results') or []) if r.get('error')))")
         infected=$(python3 -c "import json;print(sum(1 for r in (json.load(open('$report')).get('results') or []) if r.get('infected') or r.get('verdict')=='infected'))")
-        echo "Strix: scanned ${targets} target(s); infected=${infected}, errored=${errored}, scan rc=${rc}."
+        suspicious=$(python3 -c "import json;print(sum(1 for r in (json.load(open('$report')).get('results') or []) if (r.get('suspicious') or r.get('verdict')=='suspicious') and not (r.get('infected') or r.get('verdict')=='infected')))")
+        findings=$(python3 -c "import json;print(int((json.load(open('$report')).get('summary') or {}).get('findings',0) or 0))")
+        echo "Strix: scanned ${targets} target(s); infected=${infected}, suspicious=${suspicious}, findings=${findings}, scan rc=${rc}."
         if [ "$rc" != "0" ] && [ "$rc" != "1" ]; then
-          echo "::error::saw scan exited ${rc} (usage/internal error) — failing closed." >&2; exit "${rc:-1}"
+          echo "::error::saw scan exited ${rc} (usage/internal error — or, with require-db, a missing/corrupt advisory DB) — failing closed." >&2; exit "${rc:-1}"
         fi
         if [ "$targets" -lt 1 ]; then
           echo "::error::saw scan found NO target to scan (missing checkout, wrong path, or empty tree) — failing closed instead of a green no-op." >&2; exit 1
@@ -96,7 +179,77 @@ runs:
         if [ "$errored" -gt 0 ]; then
           echo "::error::saw scan could NOT process ${errored} target(s) — e.g. an unreadable or malformed config. Failing closed: a config that can't be applied must never read as clean." >&2; exit 1
         fi
+        verdict=clean
+        if [ "$suspicious" -gt 0 ]; then verdict=suspicious; fi
+        if [ "$infected" -gt 0 ] || [ "$rc" = "1" ]; then verdict=infected; fi
+        {
+          echo "verdict=$verdict"
+          echo "infected=$infected"
+          echo "suspicious=$suspicious"
+          echo "findings=$findings"
+          echo "report=$report"
+          echo "scan-rc=$rc"
+          echo "config=$cfg"
+        } >> "$GITHUB_OUTPUT"
+        # Human-readable verdict on the run page. saw's own redacted latest.md when the
+        # installed release writes one; a one-line fallback otherwise.
+        if [ -f "$reports_dir/latest.md" ]; then
+          cat "$reports_dir/latest.md" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "**Strix**: ${verdict} — ${targets} target(s), ${findings} finding(s)." >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Remediate — saw fix --pr (rolling security/auto-clean PR)
+      if: inputs.remediate == 'pr' && steps.scan.outputs.infected != '0'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      # Runs only after an infected verdict, and BEFORE the gate goes red, so the cleanup PR
+      # exists by the time a human looks at the failed check. saw rebuilds the fix in an
+      # isolated worktree off the remote's DEFAULT branch — it never commits to the default
+      # branch and never force-pushes — so on a pull_request event this remediates the
+      # repository's real state, not the PR's synthetic merge ref (a payload that exists only
+      # in the PR has nothing to remediate; the red gate on the PR is the remedy). A failure
+      # here fails the job loudly rather than pretending the guard remediated when it didn't.
+      run: |
+        set -euo pipefail
+        if ! saw fix -h >/dev/null 2>&1; then
+          echo "::error::remediate is 'pr' but the installed stayawakebot lacks 'saw fix' — set 'version' to a release that ships it." >&2
+          exit 1
+        fi
+        cfg_flag=()
+        if [ -n "${{ steps.scan.outputs.config }}" ]; then
+          cfg_flag=(-c "${{ steps.scan.outputs.config }}")
+        fi
+        cd "$GITHUB_WORKSPACE"
+        saw fix --pr "$GITHUB_WORKSPACE" "${cfg_flag[@]+"${cfg_flag[@]}"}" --no-stream
+        if compgen -G "$GITHUB_WORKSPACE/sab-patches/*.patch" >/dev/null; then
+          # Read-only fallback fired: the branch could not be pushed, so the fix exists only as
+          # patch files on this ephemeral runner. Say so where a human will see it.
+          echo "**Strix remediation**: no push access — fix saved to \`sab-patches/*.patch\` on the runner. Upload it (e.g. \`actions/upload-artifact\` with \`path: sab-patches/\`) or grant \`contents: write\` + \`pull-requests: write\`." >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "**Strix remediation**: \`saw fix --pr\` ran — see the rolling \`security/auto-clean\` PR on this repo." >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Enforce verdict gate
+      shell: bash
+      # The gate proper. `saw scan` exits 1 when infected and 0 when clean, unconditionally;
+      # rc=1 is treated as infected even if the report undercounts, so a verdict/report
+      # disagreement can never fail open. Runs AFTER remediation so the fix PR is already up
+      # when the check turns red — and it turns red regardless: only a clean tree is green.
+      run: |
+        set -euo pipefail
+        infected='${{ steps.scan.outputs.infected }}'
+        suspicious='${{ steps.scan.outputs.suspicious }}'
+        rc='${{ steps.scan.outputs.scan-rc }}'
+        if [ "${{ inputs.fail-on }}" = "never" ]; then
+          echo "Strix: report-only (fail-on: never) — verdict '${{ steps.scan.outputs.verdict }}' does not gate."
+          exit 0
+        fi
         if [ "$infected" -gt 0 ] || [ "$rc" = "1" ]; then
           echo "::error::worm indicators found — ${infected} infected target(s)." >&2; exit 1
+        fi
+        if [ "${{ inputs.fail-on }}" = "suspicious" ] && [ "$suspicious" -gt 0 ]; then
+          echo "::error::suspect-tier findings on ${suspicious} target(s) and fail-on is 'suspicious'." >&2; exit 1
         fi
         echo "Strix: clean — all scanned targets are free of worm indicators."
