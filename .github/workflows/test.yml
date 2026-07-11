@@ -23,6 +23,52 @@ jobs:
       - name: Run Strix with no config input -> auto-detects config/security.yml -> should PASS
         uses: ./
 
+  report-only-outputs:
+    name: Passes — fail-on:never reports the infected verdict without gating
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Strix report-only against the no-allowlist config -> must PASS, verdict must say infected
+        id: scan
+        uses: ./
+        with:
+          config-file: test/detection-check.yml
+          fail-on: never
+      - name: Assert the outputs still carry the real verdict
+        run: |
+          # fail-on:never must soften the GATE only — a report-only run that also launders the
+          # verdict in its outputs would be worse than useless.
+          if [ "${{ steps.scan.outputs.verdict }}" != "infected" ] || [ "${{ steps.scan.outputs.infected }}" != "1" ]; then
+            echo "::error::report-only run mis-reported the verdict (verdict='${{ steps.scan.outputs.verdict }}', infected='${{ steps.scan.outputs.infected }}')"
+            exit 1
+          fi
+          echo "Outputs OK: verdict=infected, infected=1, findings=${{ steps.scan.outputs.findings }}."
+
+  rejects-unknown-fail-on:
+    name: Fails — an unknown fail-on value is rejected, not fail-open
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Strix with a typo'd fail-on -> must FAIL fast
+        id: scan
+        uses: ./
+        continue-on-error: true
+        with:
+          fail-on: warn
+      - name: Assert the typo failed the job
+        if: always()
+        run: |
+          # A misspelled tier silently treated as some default would let a workflow think it
+          # gates when it doesn't. It must be a hard error.
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "::error::unknown fail-on value did not fail the action (outcome=${{ steps.scan.outcome }})"
+            exit 1
+          fi
+
   detects-planted-indicator:
     name: Fails — detection genuinely fires on the planted indicator
     runs-on: ubuntu-latest
