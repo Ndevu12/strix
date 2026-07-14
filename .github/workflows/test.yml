@@ -1,7 +1,7 @@
 name: test
 
 # Self-test the Action against this repo, which intentionally carries one inert planted
-# indicator (test/fixtures/infected/.gitignore matches `gitignore-autopush-markers`). The two jobs
+# indicator (tests/fixtures/infected/.gitignore matches `gitignore-autopush-markers`). The two jobs
 # exercise both of the Action's config-resolution paths — auto-detected config/security.yml, and an
 # explicit config-file — and prove it both suppresses the allowlisted fixture and still FLAGS it
 # when the config does not allowlist it.
@@ -34,7 +34,7 @@ jobs:
         id: scan
         uses: ./
         with:
-          config-file: test/detection-check.yml
+          config-file: tests/detection-check.yml
           fail-on: never
       - name: Assert the outputs still carry the real verdict
         run: |
@@ -132,7 +132,7 @@ jobs:
         uses: ./
         continue-on-error: true
         with:
-          config-file: test/detection-check.yml
+          config-file: tests/detection-check.yml
           upload-sarif: true
           upload-artifact: true
           pr-comment: true
@@ -157,7 +157,7 @@ jobs:
         uses: ./
         continue-on-error: true
         with:
-          config-file: test/detection-check.yml
+          config-file: tests/detection-check.yml
       - name: Assert the gate failed BECAUSE detection fired (not a setup/config error)
         if: always()
         run: |
@@ -169,7 +169,7 @@ jobs:
           # 2) prove the failure was REAL DETECTION, not an install/CLI/config error masquerading as
           #    one: re-run the scanner (installed by the action above) and require the exact
           #    signature + INFECTED verdict. A setup error here fails to match -> the job goes red.
-          out="$(saw scan "$GITHUB_WORKSPACE" -c test/detection-check.yml --no-stream 2>&1 || true)"
+          out="$(saw scan "$GITHUB_WORKSPACE" -c tests/detection-check.yml --no-stream 2>&1 || true)"
           echo "$out"
           if echo "$out" | grep -q "INFECTED" && echo "$out" | grep -q "gitignore-autopush-markers"; then
             echo "Detection verified: INFECTED + gitignore-autopush-markers."
