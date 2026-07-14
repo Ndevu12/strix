@@ -70,7 +70,7 @@ jobs:
           fi
 
   unit-tests:
-    name: Passes — src/strix unit tests (injection-safe rendering, redaction, config boundary)
+    name: Passes — strix unit tests (injection-safe rendering, redaction, config boundary)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,11 +78,11 @@ jobs:
         with:
           python-version: '3.13'
       - name: Run the strix package tests (stdlib unittest, no dependencies)
-        # src/strix is the only place attacker-controlled file paths and scan evidence are
+        # The strix package is the only place attacker-controlled file paths and scan evidence are
         # rendered into Markdown, so its tests are the security regression gate: a path breaking
         # out of its code span, raw evidence leaking, or env access sliding back out of the single
-        # Config boundary fails the job. Same invocation as the scanner project's CI.
-        run: PYTHONPATH=src python3 -m unittest discover -s tests -v
+        # Config boundary fails the job. Same invocation style as the scanner project's CI.
+        run: PYTHONPATH=. python3 -m unittest discover -s tests -v
 
   visibility-additive-clean:
     name: Passes — visibility features never turn a CLEAN run red (additive/non-fatal)

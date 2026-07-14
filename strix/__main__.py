@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Entrypoint: wire config → report → summary → file sinks.
 
-Run in CI as ``PYTHONPATH=src python3 -m strix``. This is the imperative shell around the pure
+Run as ``python3 -m strix`` (repo root on ``PYTHONPATH``). This is the imperative shell around the pure
 core (:mod:`strix.summary`): it resolves the environment once, loads the report, renders, and
 writes the two sinks. Every write is best-effort — the visibility layer is strictly additive,
 so a missing/unwritable sink must never fail the job (the action.yml step also guards it).

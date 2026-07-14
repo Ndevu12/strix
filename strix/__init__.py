@@ -13,5 +13,8 @@ Mirrors the scanner project's layout — one responsibility per module:
 * :mod:`strix.summary`  — render the findings-and-remediation Markdown (pure).
 * ``strix.__main__``    — the entrypoint: wire config → report → summary → file sinks.
 
-Run in CI as ``PYTHONPATH=src python3 -m strix``.
+Run as ``python3 -m strix`` with the repo root on ``PYTHONPATH`` (the action passes
+``PYTHONPATH=$GITHUB_ACTION_PATH``). strix is a GitHub Action, not a distributed package, so the
+helper lives at the repo root — not under ``src/`` (a build/install convention that never applies
+to code run in place).
 """

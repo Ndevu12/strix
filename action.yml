@@ -292,7 +292,7 @@ runs:
       shell: bash
       # Runs even on an ABORTED (fail-closed) scan, so "red gate — now what?" is answered there too.
       # The renderer redacts (renders NO raw evidence) and escapes untrusted paths; see the
-      # src/strix package (run as `python3 -m strix`). Non-fatal by construction.
+      # strix package (run as `python3 -m strix`). Non-fatal by construction.
       env:
         STRIX_VERDICT: ${{ steps.scan.outputs.verdict }}
         STRIX_INFECTED: ${{ steps.scan.outputs.infected }}
@@ -309,7 +309,7 @@ runs:
         STRIX_REDACTED="$reports_dir/latest.json" \
         STRIX_SUMMARY_OUT="$reports_dir/summary.md" \
         STRIX_PATCHES="$patches" \
-        PYTHONPATH="$GITHUB_ACTION_PATH/src" python3 -m strix \
+        PYTHONPATH="$GITHUB_ACTION_PATH" python3 -m strix \
           || echo "::notice::Strix: could not render the findings summary (non-fatal)."
         exit 0
 
