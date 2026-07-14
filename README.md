@@ -39,7 +39,10 @@ jobs:
 | `fail-on` | `infected` | Verdict tier that turns the gate red: `infected`, `suspicious`, or `never` (report-only). See below. |
 | `require-db` | `false` | `true` passes `--require-db`: fail when the offline advisory DB is absent or corrupt instead of silently degrading to the inline seed — for gates that must not lose coverage without noticing. |
 | `remediate` | `off` | `pr` runs `saw fix --pr` after an infected verdict: pushes the rolling `security/auto-clean` branch and opens/updates **one** cleanup PR per repo. The gate stays red. See below. |
-| `github-token` | workflow token | Token used only by `remediate: pr`. Pass a PAT/App token if the fix PR itself must trigger your CI (events created with the default `GITHUB_TOKEN` don't). |
+| `github-token` | workflow token | Token used by `remediate: pr` and the opt-in `pr-comment`. Pass a PAT/App token if the fix PR itself must trigger your CI (events created with the default `GITHUB_TOKEN` don't). |
+| `upload-sarif` | `false` | `true` uploads the scanner's **redacted** SARIF to GitHub code scanning → Security tab + **inline annotation on the exact line**. Additive: never changes the gate. Needs `security-events: write`. Degrades to a notice (never fails) when unsupported, on a fork PR, or when the permission is absent. See [Surfacing findings](#surfacing-findings-sarif-artifacts-pr-comment). |
+| `upload-artifact` | `false` | `true` uploads the **redacted** reports (JSON + Markdown), the SARIF, and any `sab-patches/*.patch` as a run artifact. Needs no extra permission (works on forks). Never uploads the full-evidence report or the raw infected file. See below. |
+| `pr-comment` | `false` | `true` posts/updates **one sticky** pull-request comment with the per-finding remediation guidance. Additive. Needs `pull-requests: write`. Degrades to a notice on fork PRs / when absent. See below. |
 
 ## Outputs
 
@@ -52,10 +55,13 @@ report-only runs:
 | `infected` | `1` | Number of infected targets. |
 | `suspicious` | `0` | Number of suspicious (but not infected) targets. |
 | `findings` | `10` | Total findings across all targets. |
-| `report` | `/tmp/…` | Path to the full-evidence JSON report on the runner. |
+| `report` | `/tmp/…` | Path to the **full-evidence** JSON report on the runner (raw evidence — never uploaded as an artifact). |
+| `sarif` | `/tmp/…` | Path to the **redacted** SARIF 2.1.0 report on the runner, or empty if the installed scanner can't emit SARIF. Upload it yourself if you'd rather scope `security-events: write` in your own workflow. |
 
-A redacted human-readable verdict is also appended to the job's **step summary**, so the run page
-answers "what did it find?" without digging through logs.
+On an infected/suspicious/aborted run, an **actionable, redacted** summary — per-finding location plus
+what-to-do guidance — is appended to the job's **step summary**, so the run page answers "red gate,
+now what?" without digging through logs. Findings can also travel to code scanning, a run artifact,
+and a sticky PR comment — see [Surfacing findings](#surfacing-findings-sarif-artifacts-pr-comment).
 
 ## How the verdict works
 
@@ -80,6 +86,68 @@ soft-fail on the step:
 ```yaml
       - uses: Ndevu12/strix@v1
         continue-on-error: true    # nothing fails the job, not even a broken scan
+```
+
+## Surfacing findings (SARIF, artifacts, PR comment)
+
+When the gate goes red on an infection it can't auto-fix, the findings should meet a reviewer where
+they look — not only in the raw log. Three **opt-in, additive** surfaces do that. They are **purely
+additive**: the verdict is decided by the scan *before* any of them run, and each one degrades to a
+notice rather than a failure — so none can ever flip the gate or fail your job for lack of a
+permission (a fork PR, a permission you didn't grant). The actionable **step summary** is always on
+and needs nothing.
+
+```yaml
+permissions:
+  contents: read
+  security-events: write   # ONLY if upload-sarif: true — lets SARIF reach code scanning
+  pull-requests: write     # ONLY if pr-comment: true    — lets the sticky comment be posted
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Ndevu12/strix@v1
+        with:
+          upload-sarif: true      # Security tab + inline annotation on the exact line
+          upload-artifact: true   # redacted reports + SARIF + fix patches, attached to the run
+          pr-comment: true        # one sticky PR comment with per-finding guidance
+```
+
+**Least privilege — grant only what you turn on.** GitHub token permissions are **per-job** (there
+is no step-level `permissions:`), so add a scope **only** in the workflow that enables the matching
+feature, and never blanket-grant `write-all` or flip the repo-default token to read/write:
+
+- `upload-sarif: true` → `security-events: write`. Nothing else in Strix uses it; the scan and gate
+  stay on `contents: read`.
+- `pr-comment: true` → `pull-requests: write`.
+- `upload-artifact: true` → **no extra permission** (artifact upload uses the Actions runtime token,
+  which works even on fork PRs).
+
+**Fork PRs & missing permissions degrade, never fail.** A `pull_request` from a fork has a read-only
+token, so SARIF upload and the PR comment can't authenticate. Strix falls back to a `::notice::` and
+carries on — the artifact (which *does* work from a fork) still preserves the evidence, and the gate
+result is unchanged.
+
+**Everything uploaded is redacted.** The SARIF and the JSON/Markdown reports are the scanner's own
+redacted outputs (evidence is fingerprinted, not raw); the step summary and PR comment render **no
+evidence at all** and escape untrusted file paths. The **full-evidence** report (`report` output)
+and the raw infected file are **never** uploaded. One caveat to know: a fix patch in
+`sab-patches/*.patch` is a diff that *removes* the payload, so its removed lines contain it — apply
+patches in a controlled clone. (See [Auto-remediation](#auto-remediation-remediate-pr) for how those
+patches are produced.)
+
+If you'd rather upload the SARIF from your own workflow (e.g. to scope `security-events: write` to a
+separate job), leave `upload-sarif` off and use the `sarif` output with
+[`github/codeql-action/upload-sarif`](https://github.com/github/codeql-action):
+
+```yaml
+      - uses: Ndevu12/strix@v1
+        id: strix
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always() && steps.strix.outputs.sarif != ''
+        with:
+          sarif_file: ${{ steps.strix.outputs.sarif }}
 ```
 
 ## Auto-remediation (`remediate: pr`)
@@ -118,14 +186,15 @@ Two deliberate semantics:
 
 Without push access (e.g. a fork PR's read-only token) saw walks its fallback ladder — fork PR,
 else a `git am`-able patch written to `sab-patches/` on the runner plus a deduplicated issue —
-and the step summary says which happened. To keep the patch, upload it from your workflow:
+and the step summary says which happened. To keep the patch, set `upload-artifact: true` (it bundles
+`sab-patches/*.patch` alongside the redacted reports — see
+[Surfacing findings](#surfacing-findings-sarif-artifacts-pr-comment)):
 
 ```yaml
-      - uses: actions/upload-artifact@v4
-        if: failure()
+      - uses: Ndevu12/strix@v1
         with:
-          name: strix-fix-patch
-          path: sab-patches/
+          remediate: pr
+          upload-artifact: true   # keeps sab-patches/*.patch (+ redacted reports) with the run
 ```
 
 To retire a remediation later (branch and/or PR), run `saw discard` locally — `saw discard --pr`

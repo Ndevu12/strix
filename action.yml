@@ -51,11 +51,38 @@ inputs:
     default: 'off'
   github-token:
     description: >-
-      Token used only by `remediate: pr` to push the fix branch and open the PR. Defaults to the
-      workflow token; pass a PAT or GitHub App token instead if the fix PR itself must trigger
-      your CI (events created with the default GITHUB_TOKEN don't start workflows).
+      Token used by `remediate: pr` (push the fix branch / open the PR) and by the opt-in
+      `pr-comment` step. Defaults to the workflow token; pass a PAT or GitHub App token instead if
+      the fix PR itself must trigger your CI (events created with the default GITHUB_TOKEN don't
+      start workflows).
     required: false
     default: ${{ github.token }}
+  upload-sarif:
+    description: >-
+      'true' uploads the scanner's redacted SARIF 2.1.0 report to GitHub code scanning, so findings
+      appear in the Security tab and as inline annotations on the exact line. Purely additive — it
+      never changes the gate. Requires `security-events: write` on the job (grant it ONLY when you
+      enable this; do not blanket-grant). Degrades to a notice — never a failure — when the scanner
+      is too old to emit SARIF, on a fork PR, or when the permission is absent. Default 'false'.
+    required: false
+    default: 'false'
+  upload-artifact:
+    description: >-
+      'true' uploads the scanner's REDACTED reports (JSON + Markdown), the SARIF, and any
+      `sab-patches/*.patch` as a run artifact, so the evidence travels with the run. Never uploads
+      the full-evidence report or the raw infected file. Needs no extra permission (works on fork
+      PRs). Note: a fix patch is a diff that removes the payload, so its removed lines contain the
+      payload — apply it in a controlled clone. Default 'false'.
+    required: false
+    default: 'false'
+  pr-comment:
+    description: >-
+      'true' posts (and, on re-runs, updates in place) ONE sticky pull-request comment with the
+      per-finding remediation guidance on `pull_request` events. Additive — never changes the gate.
+      Requires `pull-requests: write` on the job. Degrades to a notice on a fork PR or when the
+      permission is absent. Default 'false'.
+    required: false
+    default: 'false'
 
 outputs:
   verdict:
@@ -73,6 +100,12 @@ outputs:
   report:
     description: 'Path to the full-evidence JSON report on the runner.'
     value: ${{ steps.scan.outputs.report }}
+  sarif:
+    description: >-
+      Path to the redacted SARIF 2.1.0 report on the runner, or empty when the installed scanner is
+      too old to emit SARIF. Upload it yourself (e.g. github/codeql-action/upload-sarif) if you want
+      code scanning but prefer to scope `security-events: write` in your own workflow.
+    value: ${{ steps.scan.outputs.sarif }}
 
 runs:
   using: 'composite'
@@ -151,11 +184,25 @@ runs:
             exit 1
           fi
         fi
+        # A deterministic reports dir (not mktemp) so the additive visibility steps — and even an
+        # aborted-scan summary — can find the report and the scanner's redacted bundle by path.
+        # Defined ONCE here and exported to the job env so every later step shares it (no repeated
+        # literal); set before any fail-closed exit so the always() summary step still sees it.
         reports_dir="$RUNNER_TEMP/strix-reports"
+        mkdir -p "$reports_dir"
+        echo "STRIX_REPORTS_DIR=$reports_dir" >> "$GITHUB_ENV"
         if saw scan -h 2>/dev/null | grep -q -- '--reports-dir'; then
           extra+=(-d "$reports_dir")
         fi
-        report="$(mktemp)"
+        # SARIF is capability-probed like the other optional flags: a missing --sarif on an old
+        # pinned `version` just leaves `sarif` empty (the upload step then no-ops) — it never fails.
+        # The file is the scanner's own REDACTED SARIF (evidence fingerprinted, not raw).
+        sarif=""
+        if saw scan -h 2>/dev/null | grep -q -- '--sarif'; then
+          sarif="$reports_dir/strix.sarif"
+          extra+=(--sarif "$sarif")
+        fi
+        report="$reports_dir/report.json"
         set +e
         saw scan "$GITHUB_WORKSPACE" "${cfg_flag[@]+"${cfg_flag[@]}"}" "${extra[@]+"${extra[@]}"}" --json > "$report"
         rc=$?
@@ -188,6 +235,7 @@ runs:
           echo "suspicious=$suspicious"
           echo "findings=$findings"
           echo "report=$report"
+          echo "sarif=$sarif"
           echo "scan-rc=$rc"
           echo "config=$cfg"
         } >> "$GITHUB_OUTPUT"
@@ -226,10 +274,151 @@ runs:
         if compgen -G "$GITHUB_WORKSPACE/sab-patches/*.patch" >/dev/null; then
           # Read-only fallback fired: the branch could not be pushed, so the fix exists only as
           # patch files on this ephemeral runner. Say so where a human will see it.
-          echo "**Strix remediation**: no push access — fix saved to \`sab-patches/*.patch\` on the runner. Upload it (e.g. \`actions/upload-artifact\` with \`path: sab-patches/\`) or grant \`contents: write\` + \`pull-requests: write\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "**Strix remediation**: no push access — fix saved to \`sab-patches/*.patch\` on the runner. Set \`upload-artifact: true\` to keep it with the run, or grant \`contents: write\` + \`pull-requests: write\` for a fix PR." >> "$GITHUB_STEP_SUMMARY"
         else
           echo "**Strix remediation**: \`saw fix --pr\` ran — see the rolling \`security/auto-clean\` PR on this repo." >> "$GITHUB_STEP_SUMMARY"
         fi
+
+    # ── Visibility layer (issue #10) — strictly ADDITIVE, strictly NON-FATAL ────────────────
+    # These steps route findings to where a reviewer looks (step summary, code scanning, an
+    # artifact, a PR comment). They run BEFORE the gate so the evidence is in place when the check
+    # turns red, but they can NEVER change the gate outcome: the verdict was already decided in the
+    # "Run worm scan" step and the gate reads only those outputs. Composite steps can't use
+    # `continue-on-error`, so each `run:` step swallows its own failures with `|| ::notice::` and
+    # ends `exit 0` — a missing permission, a fork PR, or even a bug degrades to a notice.
+
+    - name: Strix — actionable findings summary (step summary + PR-comment source)
+      if: always()
+      shell: bash
+      # Runs even on an ABORTED (fail-closed) scan, so "red gate — now what?" is answered there too.
+      # The renderer redacts (renders NO raw evidence) and escapes untrusted paths; see the
+      # strix package (run as `python3 -m strix`). Non-fatal by construction.
+      env:
+        STRIX_VERDICT: ${{ steps.scan.outputs.verdict }}
+        STRIX_INFECTED: ${{ steps.scan.outputs.infected }}
+        STRIX_SUSPICIOUS: ${{ steps.scan.outputs.suspicious }}
+        STRIX_FINDINGS: ${{ steps.scan.outputs.findings }}
+        STRIX_SCAN_RC: ${{ steps.scan.outputs.scan-rc }}
+        STRIX_CONFIG_INPUT: ${{ inputs.config-file }}
+      run: |
+        set +e
+        reports_dir="$STRIX_REPORTS_DIR"   # exported once by the scan step (single source of truth)
+        patches=false
+        compgen -G "$GITHUB_WORKSPACE/sab-patches/*.patch" >/dev/null 2>&1 && patches=true
+        STRIX_REPORT="$reports_dir/report.json" \
+        STRIX_REDACTED="$reports_dir/latest.json" \
+        STRIX_SUMMARY_OUT="$reports_dir/summary.md" \
+        STRIX_PATCHES="$patches" \
+        PYTHONPATH="$GITHUB_ACTION_PATH" python3 -m strix \
+          || echo "::notice::Strix: could not render the findings summary (non-fatal)."
+        exit 0
+
+    - name: Strix — upload SARIF to code scanning (best-effort, additive)
+      if: inputs.upload-sarif == 'true' && steps.scan.outputs.sarif != ''
+      shell: bash
+      # Uploads the scanner's REDACTED SARIF to code scanning → Security tab + inline annotation on
+      # the exact line. GITHUB_SHA/GITHUB_REF are correct for push AND the PR merge ref. A 403 (no
+      # `security-events: write` / fork PR) is swallowed as a notice — never fails the job.
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        SARIF: ${{ steps.scan.outputs.sarif }}
+      run: |
+        set +e
+        if ! command -v gh >/dev/null 2>&1; then
+          echo "::notice::Strix: 'gh' unavailable (self-hosted runner?) — SARIF upload skipped; the SARIF is in the 'sarif' output / the artifact."
+          exit 0
+        fi
+        if [ ! -s "$SARIF" ]; then
+          echo "::notice::Strix: SARIF file missing/empty — upload skipped."
+          exit 0
+        fi
+        b64="$RUNNER_TEMP/strix.sarif.b64"
+        if ! gzip -c "$SARIF" | base64 | tr -d '\n' > "$b64"; then
+          echo "::notice::Strix: could not encode SARIF — upload skipped."
+          exit 0
+        fi
+        if jq -n --arg sha "$GITHUB_SHA" --arg ref "$GITHUB_REF" --rawfile z "$b64" \
+              '{commit_sha:$sha, ref:$ref, sarif:$z}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/code-scanning/sarifs" --input - >/dev/null 2>&1; then
+          echo "Strix: uploaded SARIF to code scanning — findings will appear in the Security tab and as inline annotations."
+        else
+          echo "::notice::Strix: SARIF upload skipped — needs 'security-events: write' (unavailable on fork PRs / not granted). Findings are still in the step summary and, if enabled, the artifact."
+        fi
+        exit 0
+
+    - name: Strix — stage redacted evidence for the artifact
+      if: inputs.upload-artifact == 'true'
+      shell: bash
+      # Stage REDACTED artifacts only. NEVER the full-evidence report.json and never the raw
+      # infected file. `sab-patches/*.patch` is a git-am-able diff that REMOVES the payload (its
+      # removed lines therefore contain it) — kept because it is the remediation deliverable.
+      run: |
+        set +e
+        reports_dir="$STRIX_REPORTS_DIR"   # exported once by the scan step (single source of truth)
+        stage="$RUNNER_TEMP/strix-artifact"
+        mkdir -p "$stage"
+        for f in latest.json latest.md summary.md strix.sarif; do
+          [ -f "$reports_dir/$f" ] && cp "$reports_dir/$f" "$stage/" 2>/dev/null
+        done
+        if compgen -G "$GITHUB_WORKSPACE/sab-patches/*.patch" >/dev/null 2>&1; then
+          mkdir -p "$stage/sab-patches"
+          cp "$GITHUB_WORKSPACE"/sab-patches/*.patch "$stage/sab-patches/" 2>/dev/null
+        fi
+        exit 0
+
+    - name: Strix — upload evidence artifact
+      if: inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+      with:
+        # Per-job unique name (+ overwrite) so running Strix in more than one job of a workflow
+        # can't hit upload-artifact@v4's duplicate-name failure — which, being a `uses:` step,
+        # couldn't be softened and would violate the additive/non-fatal contract.
+        name: strix-evidence-${{ github.job }}
+        path: ${{ runner.temp }}/strix-artifact
+        if-no-files-found: ignore
+        overwrite: true
+        retention-days: 7
+
+    - name: Strix — sticky PR comment with remediation guidance (best-effort, additive)
+      if: inputs.pr-comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      # Post ONE sticky comment (found & updated in place via a hidden marker), reusing the exact
+      # markdown the summary rendered (DRY). Body is passed as a file through `jq --rawfile`, so no
+      # untrusted content is ever interpolated into the shell. A missing `pull-requests: write`
+      # (fork PR / not granted) degrades to a notice.
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        VERDICT: ${{ steps.scan.outputs.verdict }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set +e
+        body="$STRIX_REPORTS_DIR/summary.md"   # exported once by the scan step (single source of truth)
+        marker="<!-- strix-worm-scan-summary -->"
+        repo="$GITHUB_REPOSITORY"
+        if ! command -v gh >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+          echo "::notice::Strix: 'gh'/'jq' unavailable — PR comment skipped."
+          exit 0
+        fi
+        if [ ! -s "$body" ]; then
+          echo "::notice::Strix: no rendered summary — PR comment skipped."
+          exit 0
+        fi
+        existing="$(gh api "repos/$repo/issues/$PR_NUMBER/comments" --paginate \
+                    --jq ".[] | select(.body|contains(\"$marker\")) | .id" 2>/dev/null | head -n1)"
+        if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+          jq -n --rawfile b "$body" '{body:$b}' \
+            | gh api --method PATCH "repos/$repo/issues/comments/$existing" --input - >/dev/null 2>&1 \
+            && echo "Strix: updated the sticky PR comment." \
+            || echo "::notice::Strix: could not update the PR comment (needs 'pull-requests: write'; unavailable on fork PRs)."
+        elif [ "$VERDICT" != "clean" ]; then
+          jq -n --rawfile b "$body" '{body:$b}' \
+            | gh api --method POST "repos/$repo/issues/$PR_NUMBER/comments" --input - >/dev/null 2>&1 \
+            && echo "Strix: posted a sticky PR comment with remediation guidance." \
+            || echo "::notice::Strix: could not post the PR comment (needs 'pull-requests: write'; unavailable on fork PRs)."
+        else
+          echo "Strix: clean with no prior comment — nothing to post."
+        fi
+        exit 0
 
     - name: Enforce verdict gate
       shell: bash
