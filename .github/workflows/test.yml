@@ -69,6 +69,82 @@ jobs:
             exit 1
           fi
 
+  unit-tests:
+    name: Passes — src/strix unit tests (injection-safe rendering, redaction, config boundary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Run the strix package tests (stdlib unittest, no dependencies)
+        # src/strix is the only place attacker-controlled file paths and scan evidence are
+        # rendered into Markdown, so its tests are the security regression gate: a path breaking
+        # out of its code span, raw evidence leaking, or env access sliding back out of the single
+        # Config boundary fails the job. Same invocation as the scanner project's CI.
+        run: PYTHONPATH=src python3 -m unittest discover -s tests -v
+
+  visibility-additive-clean:
+    name: Passes — visibility features never turn a CLEAN run red (additive/non-fatal)
+    runs-on: ubuntu-latest
+    # Deliberately NO security-events/pull-requests grant: SARIF upload + PR comment must degrade to
+    # a notice (as on a fork PR), not fail. If any visibility step were fatal, this clean run — which
+    # the gate passes — would go red. That regression is exactly what this asserts against.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Strix on the allowlisted (clean) config with ALL visibility features ON -> must PASS
+        id: scan
+        uses: ./
+        with:
+          upload-sarif: true
+          upload-artifact: true
+          pr-comment: true
+      - name: Assert the run stayed green and the SARIF was generated
+        run: |
+          # A clean scan with every surface enabled must still PASS — the visibility layer is
+          # additive and non-fatal. (steps.scan.outcome is 'success' only if nothing failed.)
+          if [ "${{ steps.scan.outcome }}" != "success" ]; then
+            echo "::error::a visibility feature turned a clean run red (outcome=${{ steps.scan.outcome }})"
+            exit 1
+          fi
+          # The scanner supports --sarif, so the action must have generated (and exported) it.
+          if [ -z "${{ steps.scan.outputs.sarif }}" ]; then
+            echo "::error::sarif output is empty — SARIF was not generated"
+            exit 1
+          fi
+          echo "Clean + all features on stayed green; sarif=${{ steps.scan.outputs.sarif }}"
+
+  visibility-additive-infected:
+    name: Fails — visibility features do NOT suppress the gate on an infected run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Strix on the no-allowlist config with ALL visibility features ON -> the gate must still FAIL
+        id: scan
+        uses: ./
+        continue-on-error: true
+        with:
+          config-file: test/detection-check.yml
+          upload-sarif: true
+          upload-artifact: true
+          pr-comment: true
+      - name: Assert the gate still fired (features are additive, they don't launder the verdict)
+        if: always()
+        run: |
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "::error::visibility features suppressed the gate on the planted indicator (outcome=${{ steps.scan.outcome }})"
+            exit 1
+          fi
+          echo "Gate still failed on the planted indicator with all visibility features enabled."
+
   detects-planted-indicator:
     name: Fails — detection genuinely fires on the planted indicator
     runs-on: ubuntu-latest

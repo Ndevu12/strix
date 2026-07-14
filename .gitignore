@@ -1,0 +1,11 @@
+# Python bytecode from the action's helper scripts (scripts/*.py)
+__pycache__/
+*.py[cod]
+
+# Local env for running the renderer outside CI (see src/strix/config.env.example). Never commit
+# real paths/tokens; the committed *.env.example documents the contract.
+.env
+src/strix/.env
+
+# Scanner runtime artifacts — never commit these (a local `saw` run drops a quarantine copy).
+.malware-quarantine/
