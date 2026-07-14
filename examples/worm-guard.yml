@@ -1,0 +1,40 @@
+# Strix worm-guard — a safe-by-default, copy-paste starting point for a consumer repo.
+# Drop this in as `.github/workflows/worm-guard.yml`, then work the "Hardening checklist" in the
+# Strix README (required status check, SHA pin, CODEOWNERS on the gate files).
+#
+# It blocks a merge when Strix finds self-propagating worm indicators. Two triggers:
+#   • pull_request — catches a payload (and the evil merge that introduces it) ON THE PR, before it
+#     reaches your default branch. This is the point: a blocked PR, not a retroactive cleanup.
+#   • push to the default branch — a post-merge backstop (detection) for anything that slipped in.
+#
+# THREAT MODEL: on a pull_request the action code and your config/security.yml come FROM THE PR, so
+# a PR can weaken its own gate (widen the allowlist / neuter the workflow). This gate is a backstop;
+# the real control is branch protection + CODEOWNERS review of config/security.yml + .github/**.
+#
+# LEAST PRIVILEGE: this gate needs only `contents: read`. Do NOT flip the repo's default token to
+# "Read and write". For auto-remediation, see the README's "Auto-remediation" section — grant write
+# only there, and prefer a push-to-default-branch trigger over PR triggers (keep PR runs report-only).
+name: Worm guard — block infected merges
+
+on:
+  pull_request:
+  push:
+    branches: [main]   # ← set to your default branch
+
+permissions:
+  contents: read       # pure exit-code gate: green = clean, red = infected — keyed only on the verdict
+
+jobs:
+  worm-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history so evil-merge detection sees the whole commit graph)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Strix worm scan
+        # Pin to a commit SHA in production (`Ndevu12/strix@<sha>`) so the gate's own logic can't
+        # change under you; `@v1` tracks the latest v1.x and is fine for trying it out.
+        uses: Ndevu12/strix@v1
+        with:
+          config-file: config/security.yml   # your committed saw allowlist (optional; omit to use defaults)
