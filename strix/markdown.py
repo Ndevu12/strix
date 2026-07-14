@@ -16,18 +16,25 @@ from __future__ import annotations
 import unicodedata
 
 
-def sanitize(s: str, limit: int = 300) -> str:
-    """Neutralize a possibly attacker-controlled string for a Markdown code span: every
-    control/format char, line/paragraph separator, or bidi override (Unicode category
-    C*/Zl/Zp — newlines, NEL, U+2028/9, RLO, …) becomes a space so it can't break the list
-    item, smuggle markup, or spoof text direction; backticks become U+02BC so it can't break
-    OUT of the span; length is bounded so a hostile path can't bloat the body."""
-    out = "".join(
+def strip_unprintable(s: str) -> str:
+    """Replace every control/format char (Unicode category C*, incl. the ANSI ESC and NUL) and
+    line/paragraph separator (Zl/Zp — newlines, NEL, U+2028/9, bidi overrides like RLO) with a
+    space. The shared, audited core of both the Markdown escaper (:func:`sanitize`) and the CI-log
+    escaper (:func:`strix.logsafe.logsafe`) — one place to reason about which code points are
+    neutralized."""
+    return "".join(
         ch if not (unicodedata.category(ch)[0] == "C"
                    or unicodedata.category(ch) in ("Zl", "Zp")) else " "
         for ch in str(s)
     )
-    return out.replace("`", "ʼ")[:limit]
+
+
+def sanitize(s: str, limit: int = 300) -> str:
+    """Neutralize a possibly attacker-controlled string for a Markdown code span: strip every
+    unprintable/separator/bidi char (:func:`strip_unprintable`) so it can't break the list item or
+    spoof direction, replace backticks with U+02BC so it can't break OUT of the span, and bound the
+    length so a hostile path can't bloat the body."""
+    return strip_unprintable(s).replace("`", "ʼ")[:limit]
 
 
 def code(s: str, limit: int = 300) -> str:

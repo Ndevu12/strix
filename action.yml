@@ -247,6 +247,22 @@ runs:
           echo "**Strix**: ${verdict} — ${targets} target(s), ${findings} finding(s)." >> "$GITHUB_STEP_SUMMARY"
         fi
 
+    - name: Strix — render the full scan report to the log (redacted, issue #12)
+      if: always()
+      shell: bash
+      # Parity with a local `saw scan`: show the verdict AND the full findings breakdown in the CI
+      # terminal, not just the streamed one-liner. Rendered from the REDACTED latest.json — NEVER
+      # saw's raw stdout, which prints evidence verbatim — with untrusted paths sanitized against
+      # ANSI / `::`-workflow-command injection and the list bounded. Strictly additive & non-fatal:
+      # it only reads the report and prints; the scan invocation and the gate are untouched. When an
+      # old pinned scanner didn't write latest.json, it quietly no-ops (today's terse log).
+      run: |
+        set +e
+        STRIX_REDACTED="$STRIX_REPORTS_DIR/latest.json" \
+        PYTHONPATH="$GITHUB_ACTION_PATH" python3 -m strix log \
+          || echo "::notice::Strix: could not render the scan report to the log (non-fatal)."
+        exit 0
+
     - name: Remediate — saw fix --pr (rolling security/auto-clean PR)
       if: inputs.remediate == 'pr' && steps.scan.outputs.infected != '0'
       shell: bash
