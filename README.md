@@ -60,8 +60,12 @@ report-only runs:
 
 On an infected/suspicious/aborted run, an **actionable, redacted** summary — per-finding location plus
 what-to-do guidance — is appended to the job's **step summary**, so the run page answers "red gate,
-now what?" without digging through logs. Findings can also travel to code scanning, a run artifact,
-and a sticky PR comment — see [Surfacing findings](#surfacing-findings-sarif-artifacts-pr-comment).
+now what?" without digging through logs. The **CI log** itself also shows the full findings
+breakdown (verdict + each finding's location), like a local `saw scan` run — rendered from the
+scanner's **redacted** report, so evidence bytes never reach the (public, cached) log, untrusted
+paths are sanitized, and the list is bounded. Findings can also travel to code scanning, a run
+artifact, and a sticky PR comment — see
+[Surfacing findings](#surfacing-findings-sarif-artifacts-pr-comment).
 
 ## How the verdict works
 

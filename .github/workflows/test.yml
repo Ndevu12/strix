@@ -177,3 +177,22 @@ jobs:
             echo "::error::planted indicator was NOT actually detected — a setup/config error masqueraded as detection."
             exit 1
           fi
+
+      - name: Assert the CI-log report shows findings but redacts evidence (issue #12)
+        if: always()
+        # Integration proof for the log renderer: run the installed scanner to a REDACTED bundle,
+        # then render it the way the action does (`python3 -m strix log`). The log must show the
+        # planted finding AND must not contain its raw evidence bytes (`temp_auto_push.bat`), which
+        # live only in saw's full-evidence output — never in the redacted report the renderer reads.
+        run: |
+          rd="$RUNNER_TEMP/strix-logcheck"
+          saw scan "$GITHUB_WORKSPACE" -c tests/detection-check.yml -d "$rd" --no-stream >/dev/null 2>&1 || true
+          log="$(STRIX_REDACTED="$rd/latest.json" PYTHONPATH=. python3 -m strix log)"
+          echo "$log"
+          if ! echo "$log" | grep -q "gitignore-autopush-markers"; then
+            echo "::error::CI-log report did not show the planted finding"; exit 1
+          fi
+          if echo "$log" | grep -q "temp_auto_push.bat"; then
+            echo "::error::CI-log report leaked raw evidence bytes"; exit 1
+          fi
+          echo "CI-log report OK: shows the finding, redacts evidence."
