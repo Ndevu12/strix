@@ -1,0 +1,67 @@
+name: Scanner pin freshness
+
+# The worm-guard gate pins the `stayawakebot` scanner to an exact PyPI version for a reproducible
+# gate — but a pin goes stale, and a stale pin runs an out-of-date DETECTION ENGINE while you think
+# you're covered. Weekly (and on demand) this compares the pinned version against the latest PyPI
+# release and opens/updates ONE deduplicated issue when it has drifted behind, so the pin can't
+# silently rot. It NEVER fails a build and NEVER changes the gate — it only files a reminder.
+#
+# The decision (numeric version compare) lives in .github/scripts/check_pin_freshness.py, unit-tested
+# by tests/test_pin_freshness.py; this workflow only feeds it the repo and acts on the result.
+on:
+  schedule:
+    - cron: '0 7 * * 1'        # Mondays 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write                # to open/update the reminder issue — nothing else
+
+jobs:
+  pin-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
+      - name: Compare the pinned scanner version against the latest PyPI release
+        id: check
+        run: python3 .github/scripts/check_pin_freshness.py
+
+      - name: Open or update a deduplicated issue when the pin is stale
+        if: steps.check.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.check.outputs.pinned }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # Ensure the dedup label exists (idempotent), then update the open issue if one exists,
+          # else create it. One rolling issue — re-runs never spam new ones.
+          gh label create scanner-pin-stale --color BFD4F2 \
+            --description "worm-guard's scanner pin has drifted behind the latest release" 2>/dev/null || true
+          title="Scanner pin is stale — worm-guard pins ${PINNED}, latest is ${LATEST}"
+          body="The worm-guard gate pins the \`stayawakebot\` scanner to **${PINNED}**, but the latest PyPI release is **${LATEST}**. A stale pin runs an out-of-date detection engine while the gate looks green.
+
+          Review the newer release, then bump \`version:\` in \`.github/workflows/worm-guard.yml\`.
+
+          _Opened by \`scanner-pin-freshness.yml\`. This issue is de-duplicated and auto-updated; it closes on its own once the pin catches up._"
+          num=$(gh issue list --state open --label scanner-pin-stale --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue edit "$num" --title "$title" --body "$body"
+            echo "Updated stale-pin issue #$num."
+          else
+            gh issue create --title "$title" --body "$body" --label scanner-pin-stale
+          fi
+
+      - name: Close the reminder once the pin has caught up
+        if: steps.check.outputs.stale != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.check.outputs.pinned }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          echo "Scanner pin ${PINNED} is current (latest ${LATEST})."
+          num=$(gh issue list --state open --label scanner-pin-stale --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue close "$num" --comment "Pin is current again (now at ${PINNED}). Closing automatically."
+          fi

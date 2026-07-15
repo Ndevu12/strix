@@ -78,7 +78,7 @@ Findings can also travel to code scanning, a run artifact, and a sticky PR comme
 ## Versioning
 
 `@v1` tracks the latest v1.x release (moving tag). Pin `@v0.1.0` (or a commit SHA) for a fully
-reproducible build.
+reproducible build. Release notes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

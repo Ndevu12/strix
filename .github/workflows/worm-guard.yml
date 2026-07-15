@@ -23,13 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history for evil-merge detection)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
         with:
           fetch-depth: 0
       - name: Scan this repo with Strix (config/security.yml is the single source of truth)
         uses: ./
         with:
           # Pin the scanner for a reproducible gate — don't float the thing that decides merges.
-          # Bump deliberately after reviewing a newer release (keep in step with the moving v1 tag).
-          version: '0.1.7'
+          # Bump deliberately after reviewing a newer release; scanner-pin-freshness.yml opens an
+          # issue when this drifts behind the latest PyPI release so it can't silently go stale.
+          version: '0.1.12'
           config-file: config/security.yml
