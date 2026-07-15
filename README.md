@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0          # full history so evil-merge detection works
-      - uses: Ndevu12/strix@v1
+      - uses: Ndevu12/strix@v0.1.4 # Older version Ndevu12/strix@v1
         with:
           version: ''                     # blank = latest; pin in production
           config-file: config/security.yml # your saw config (optional)
