@@ -17,7 +17,7 @@ jobs:
     name: Passes — auto-detected config/security.yml allowlists the fixture
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
         with:
           fetch-depth: 0
       - name: Run Strix with no config input -> auto-detects config/security.yml -> should PASS
@@ -27,7 +27,7 @@ jobs:
     name: Passes — fail-on:never reports the infected verdict without gating
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
         with:
           fetch-depth: 0
       - name: Run Strix report-only against the no-allowlist config -> must PASS, verdict must say infected
@@ -50,7 +50,7 @@ jobs:
     name: Fails — an unknown fail-on value is rejected, not fail-open
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
         with:
           fetch-depth: 0
       - name: Run Strix with a typo'd fail-on -> must FAIL fast
@@ -73,8 +73,8 @@ jobs:
     name: Passes — strix unit tests (injection-safe rendering, redaction, config boundary)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1   # v6.3.0
         with:
           python-version: '3.13'
       - name: Run the strix package tests (stdlib unittest, no dependencies)
@@ -93,7 +93,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
         with:
           fetch-depth: 0
       - name: Run Strix on the allowlisted (clean) config with ALL visibility features ON -> must PASS
@@ -124,7 +124,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
         with:
           fetch-depth: 0
       - name: Run Strix on the no-allowlist config with ALL visibility features ON -> the gate must still FAIL
@@ -149,7 +149,7 @@ jobs:
     name: Fails — detection genuinely fires on the planted indicator
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4.3.1
         with:
           fetch-depth: 0
       - name: Run Strix with a no-allowlist config -> the gate must FAIL
