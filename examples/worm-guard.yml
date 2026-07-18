@@ -34,7 +34,7 @@ jobs:
           fetch-depth: 0
       - name: Strix worm scan
         # Pin to a commit SHA in production (`Ndevu12/strix@<sha>`) so the gate's own logic can't
-        # change under you; `@v1` tracks the latest v1.x and is fine for trying it out.
-        uses: Ndevu12/strix@v1
+        # change under you. `@v0.1.4` is a real release tag; `@v0` is the moving "latest 0.x" alias.
+        uses: Ndevu12/strix@v0.1.4
         with:
           config-file: config/security.yml   # your committed saw allowlist (optional; omit to use defaults)
