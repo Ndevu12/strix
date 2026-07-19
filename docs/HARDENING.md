@@ -13,6 +13,8 @@ below get you there.
 
 ## Hardening checklist
 
+**Automate most of this with `saw guard`** (from the `stayawakebot` package): `saw guard setup` installs the gate SHA-pinned and opens pin-bump PRs; `saw guard check -f` verifies it is present, SHA-pinned, current, and a required check, and gates CI on the result. The steps below remain the source of truth — **CODEOWNERS review** and **`fetch-depth: 0`** in particular are yours to set, not something the installer can do for you.
+
 - [ ] **Make the Strix job a required status check** on your default branch, so a renamed or removed
   job blocks a merge instead of silently passing.
 - [ ] **Check out with `fetch-depth: 0`** so evil-merge detection sees the full commit graph and
