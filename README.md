@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0          # full history so evil-merge detection works
-      - uses: Ndevu12/strix@v0.1.4 # Older version Ndevu12/strix@v1
+      - uses: Ndevu12/strix@v0.1.4   # pin a release tag (or a commit SHA — see Versioning)
         with:
           version: ''                     # blank = latest; pin in production
           config-file: config/security.yml # your saw config (optional)
@@ -77,8 +77,17 @@ Findings can also travel to code scanning, a run artifact, and a sticky PR comme
 
 ## Versioning
 
-`@v1` tracks the latest v1.x release (moving tag). Pin `@v0.1.0` (or a commit SHA) for a fully
-reproducible build. Release notes live in [CHANGELOG.md](CHANGELOG.md).
+Strix is `0.x` (pre-1.0). In order of preference:
+
+- **A commit SHA — `Ndevu12/strix@<sha>`.** The security-sound choice, so the gate's own logic can't
+  change under you. This is what `saw guard setup` emits.
+- **An exact release tag — `@v0.1.4`.** Reproducible; bump it deliberately.
+- **A moving alias — `@v0`** (or the legacy `@v1`). Points at the latest `0.x` release, advanced as
+  part of a release. Convenient, but a moving tag can change under you — prefer a SHA or an exact tag
+  for anything you rely on.
+
+There is no `v1.x` yet, so `@v1` is kept only for repos that already pin it; please migrate to a SHA
+(or `@v0`). Release notes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
