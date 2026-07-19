@@ -31,6 +31,8 @@ jobs:
 `fetch-depth: 0` is required for evil-merge detection (it needs the full commit graph). Deploying
 this as a required check is the whole point — see the [hardening checklist](docs/HARDENING.md).
 
+**Install and keep it current with `saw guard`.** From the `stayawakebot` package, `saw guard setup` installs this gate **SHA-pinned to the latest Strix release** and proposes pin bumps via PR, and `saw guard check` verifies it is present, SHA-pinned, current, and a required check — across a single repo or a whole account/org. It is the automated path to the hardening checklist below; the snippet above is the manual equivalent.
+
 ## Inputs
 
 | Input | Default | Description |
