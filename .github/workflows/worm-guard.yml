@@ -32,5 +32,5 @@ jobs:
           # Pin the scanner for a reproducible gate — don't float the thing that decides merges.
           # Bump deliberately after reviewing a newer release; scanner-pin-freshness.yml opens an
           # issue when this drifts behind the latest PyPI release so it can't silently go stale.
-          version: '0.1.12'
+          version: '0.6.2'
           config-file: config/security.yml
