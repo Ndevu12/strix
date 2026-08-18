@@ -9,3 +9,7 @@ strix/.env
 
 # Scanner runtime artifacts — never commit these (a local `saw` run drops a quarantine copy).
 .malware-quarantine/
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
